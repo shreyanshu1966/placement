@@ -26,8 +26,9 @@ export const AuthProvider = ({ children }) => {
       // Verify token is still valid
       authAPI.getMe()
         .then(response => {
-          setUser(response.data.data);
-          localStorage.setItem('user', JSON.stringify(response.data.data));
+          const userData = response.data.user || response.data.data || response.data;
+          setUser(userData);
+          localStorage.setItem('user', JSON.stringify(userData));
         })
         .catch(() => {
           // Token invalid, clear storage
@@ -45,7 +46,7 @@ export const AuthProvider = ({ children }) => {
     try {
       setError(null);
       const response = await authAPI.login({ email, password });
-      const { token, user: userData } = response.data.data;
+      const { token, user: userData } = response.data;
       
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(userData));
@@ -63,7 +64,7 @@ export const AuthProvider = ({ children }) => {
     try {
       setError(null);
       const response = await authAPI.register(userData);
-      const { token, user: newUser } = response.data.data;
+      const { token, user: newUser } = response.data;
       
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(newUser));
@@ -88,7 +89,7 @@ export const AuthProvider = ({ children }) => {
     try {
       setError(null);
       const response = await authAPI.updateProfile(data);
-      const updatedUser = response.data.data;
+      const updatedUser = response.data.user || response.data.data || response.data;
       
       localStorage.setItem('user', JSON.stringify(updatedUser));
       setUser(updatedUser);

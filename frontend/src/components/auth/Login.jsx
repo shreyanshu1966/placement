@@ -37,7 +37,7 @@ const Login = () => {
   const demoAccounts = [
     { 
       role: 'Student', 
-      email: 'student@example.com', 
+      email: 'alice.student@college.edu', 
       password: 'student123',
       color: 'bg-blue-50 border-blue-200',
       textColor: 'text-blue-700',
@@ -45,7 +45,7 @@ const Login = () => {
     },
     { 
       role: 'Faculty', 
-      email: 'faculty@example.com', 
+      email: 'john.smith@college.edu', 
       password: 'faculty123',
       color: 'bg-purple-50 border-purple-200',
       textColor: 'text-purple-700',
@@ -53,7 +53,7 @@ const Login = () => {
     },
     { 
       role: 'Admin', 
-      email: 'admin@example.com', 
+      email: 'admin@college.edu', 
       password: 'admin123',
       color: 'bg-indigo-50 border-indigo-200',
       textColor: 'text-indigo-700',
