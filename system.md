@@ -1,0 +1,1 @@
+An AI-powered adaptive assessment system that generates and personalizes tests based on each student’s academic progress, performance trends, and syllabus coverage — providing continuous learning insights and industry-aligned readiness for placements.
