@@ -12,6 +12,7 @@
     "test:api": "node comprehensive-test.js",
     "test:ai": "node test-ai-services.js",
     "test:system": "node test-system-integration.js",
+    "test:comprehensive": "node comprehensive-system-test.js",
     "setup:ollama": "powershell -ExecutionPolicy Bypass -File setup-ollama.ps1"
   },
   "keywords": [],

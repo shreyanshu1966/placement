@@ -120,9 +120,9 @@ class OllamaService {
   }
 
   /**
-   * Pull a model from Ollama library
+   * Pull/Download a model from Ollama
    * @param {string} modelName - Name of the model to pull
-   * @returns {Promise<boolean>}
+   * @returns {Promise<boolean>} Success status
    */
   async pullModel(modelName) {
     try {
@@ -134,6 +134,32 @@ class OllamaService {
     } catch (error) {
       console.error('Failed to pull model:', error.message);
       return false;
+    }
+  }
+
+  /**
+   * Test connection to Ollama service
+   * @returns {Promise<Object>} Connection status
+   */
+  async testConnection() {
+    try {
+      const response = await axios.get(`${this.OLLAMA_BASE_URL}/api/tags`, {
+        timeout: 5000
+      });
+      
+      return {
+        success: true,
+        url: this.OLLAMA_BASE_URL,
+        models: response.data?.models || [],
+        defaultModel: this.DEFAULT_MODEL
+      };
+    } catch (error) {
+      return {
+        success: false,
+        url: this.OLLAMA_BASE_URL,
+        error: error.message,
+        defaultModel: this.DEFAULT_MODEL
+      };
     }
   }
 }
