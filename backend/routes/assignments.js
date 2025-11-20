@@ -129,7 +129,7 @@ function generateFallbackQuestions(topic, count = 3) {
 // Create assignment for selected students (Faculty-created)
 router.post('/create', async (req, res) => {
   try {
-    const { courseId, selectedTopics, assignedStudents, createdBy, title } = req.body;
+    const { courseId, selectedTopics, assignedStudents, createdBy, title, proctorConfig } = req.body;
     
     // Validate inputs
     if (!courseId || !selectedTopics?.length || !assignedStudents?.length) {
@@ -146,6 +146,7 @@ router.post('/create', async (req, res) => {
     console.log(`Creating assignment: ${title || 'Untitled'}`);
     console.log(`Topics: ${selectedTopics.join(', ')}`);
     console.log(`Students: ${assignedStudents.length}`);
+    console.log(`Proctoring enabled: ${proctorConfig?.enabled || false}`);
 
     // Generate questions for selected topics using enhanced API
     console.log('Step 1: Generating questions with enhanced API...');
@@ -212,7 +213,8 @@ router.post('/create', async (req, res) => {
       selectedTopics,
       questionsGenerated,
       difficulty: 'medium',
-      adaptiveReason: `Faculty assessment covering: ${selectedTopics.join(', ')}`
+      adaptiveReason: `Faculty assessment covering: ${selectedTopics.join(', ')}`,
+      proctorConfig: proctorConfig || { enabled: false } // Add proctoring configuration
     });
     
     await assignment.save();
@@ -452,9 +454,20 @@ router.get('/:id', async (req, res) => {
 // Start assignment (mark as in-progress)
 router.put('/:id/start', async (req, res) => {
   try {
+    const { studentId } = req.body;
     const assignment = await Assignment.findByIdAndUpdate(
       req.params.id,
-      { status: 'in-progress' },
+      { 
+        status: 'in-progress',
+        startedAt: new Date(),
+        $push: { 
+          testSessions: {
+            studentId: studentId,
+            startTime: new Date(),
+            status: 'in-progress'
+          }
+        }
+      },
       { new: true }
     ).populate('courseId');
     
@@ -464,6 +477,154 @@ router.put('/:id/start', async (req, res) => {
     
     res.json(assignment);
   } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Save answer for a question (auto-save functionality)
+router.post('/:id/save-answer', async (req, res) => {
+  try {
+    const { studentId, questionIndex, selectedAnswer, timestamp } = req.body;
+    const assignmentId = req.params.id;
+
+    // Find or create test session
+    const assignment = await Assignment.findById(assignmentId);
+    if (!assignment) {
+      return res.status(404).json({ message: 'Assignment not found' });
+    }
+
+    // Update the answer in memory or database
+    // For now, we'll just return success - answers will be submitted at the end
+    res.json({ 
+      message: 'Answer saved',
+      questionIndex,
+      selectedAnswer,
+      timestamp: new Date()
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Submit complete assignment
+router.post('/:id/submit', async (req, res) => {
+  try {
+    const { studentId, answers, timeTaken } = req.body;
+    const assignmentId = req.params.id;
+
+    const assignment = await Assignment.findById(assignmentId);
+    if (!assignment) {
+      return res.status(404).json({ message: 'Assignment not found' });
+    }
+
+    // Calculate score
+    let correctAnswers = 0;
+    const questionResults = assignment.questionsGenerated.map((question, index) => {
+      const userAnswer = answers[index];
+      const isCorrect = userAnswer === question.correctAnswer;
+      if (isCorrect) correctAnswers++;
+      
+      return {
+        questionId: question.questionId || `fallback-${index}`,
+        question: question.question,
+        userAnswer,
+        correctAnswer: question.correctAnswer,
+        isCorrect,
+        topic: question.topic || 'Unknown'
+      };
+    });
+
+    const score = (correctAnswers / assignment.questionsGenerated.length) * 100;
+
+    // Create result record
+    const Result = require('../models/Result');
+    const result = new Result({
+      assignmentId,
+      studentId,
+      answers: questionResults,
+      score,
+      totalQuestions: assignment.questionsGenerated.length,
+      correctAnswers,
+      timeTaken,
+      submittedAt: new Date()
+    });
+
+    await result.save();
+
+    // Update assignment status
+    await Assignment.findByIdAndUpdate(assignmentId, {
+      status: 'completed',
+      $push: {
+        submissions: {
+          studentId,
+          score,
+          submittedAt: new Date(),
+          resultId: result._id
+        }
+      }
+    });
+
+    res.json({
+      message: 'Assignment submitted successfully',
+      score,
+      correctAnswers,
+      totalQuestions: assignment.questionsGenerated.length,
+      resultId: result._id
+    });
+  } catch (error) {
+    console.error('Assignment submission error:', error);
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Get assignment with student-specific data
+router.get('/:id/student/:studentId', async (req, res) => {
+  try {
+    const { id, studentId } = req.params;
+    
+    const assignment = await Assignment.findById(id).populate('courseId');
+    if (!assignment) {
+      return res.status(404).json({ message: 'Assignment not found' });
+    }
+
+    // Check if student is assigned
+    if (!assignment.assignedStudents.includes(studentId)) {
+      return res.status(403).json({ message: 'Student not assigned to this test' });
+    }
+
+    // Check if already submitted
+    const existingSubmission = assignment.submissions?.find(sub => sub.studentId === studentId);
+    if (existingSubmission) {
+      return res.status(400).json({ 
+        message: 'Assignment already submitted',
+        submission: existingSubmission
+      });
+    }
+
+    res.json(assignment);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Delete assignment
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const assignment = await Assignment.findById(id);
+    if (!assignment) {
+      return res.status(404).json({ message: 'Assignment not found' });
+    }
+
+    // Optional: Check if user has permission to delete
+    // This could be enhanced to check if the user created the assignment
+
+    await Assignment.findByIdAndDelete(id);
+    
+    res.json({ message: 'Assignment deleted successfully' });
+  } catch (error) {
+    console.error('Delete assignment error:', error);
     res.status(400).json({ message: error.message });
   }
 });

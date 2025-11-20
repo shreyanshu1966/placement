@@ -40,6 +40,94 @@ const assignmentSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  timeLimit: {
+    type: Number, // Time limit in minutes
+    default: 60
+  },
+  // Proctoring Configuration
+  proctorConfig: {
+    enabled: {
+      type: Boolean,
+      default: false
+    },
+    webcamRequired: {
+      type: Boolean,
+      default: true
+    },
+    screenRecording: {
+      type: Boolean,
+      default: true
+    },
+    audioMonitoring: {
+      type: Boolean,
+      default: false
+    },
+    faceDetection: {
+      type: Boolean,
+      default: true
+    },
+    eyeTracking: {
+      type: Boolean,
+      default: false
+    },
+    browserLockdown: {
+      type: Boolean,
+      default: true
+    },
+    preventCopyPaste: {
+      type: Boolean,
+      default: true
+    },
+    preventRightClick: {
+      type: Boolean,
+      default: true
+    },
+    preventTabSwitch: {
+      type: Boolean,
+      default: true
+    },
+    allowCalculator: {
+      type: Boolean,
+      default: false
+    },
+    allowNotes: {
+      type: Boolean,
+      default: false
+    },
+    maxSuspiciousActivities: {
+      type: Number,
+      default: 5
+    },
+    autoTerminateOnCritical: {
+      type: Boolean,
+      default: true
+    },
+    recordingQuality: {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      default: 'medium'
+    }
+  },
+  startedAt: Date,
+  testSessions: [{
+    studentId: String,
+    startTime: Date,
+    endTime: Date,
+    status: {
+      type: String,
+      enum: ['in-progress', 'completed', 'timed-out'],
+      default: 'in-progress'
+    }
+  }],
+  submissions: [{
+    studentId: String,
+    score: Number,
+    submittedAt: Date,
+    resultId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Result'
+    }
+  }],
   createdAt: {
     type: Date,
     default: Date.now

@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { assignmentAPI, resultAPI, contextAPI, courseAPI } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 const StudentDashboard = () => {
+  const { user } = useAuth();
+  const location = useLocation();
   const [courses, setCourses] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
@@ -11,12 +14,20 @@ const StudentDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [selectedCourse, setSelectedCourse] = useState('');
   const [generatingTest, setGeneratingTest] = useState(false);
+  const [message, setMessage] = useState('');
 
-  const studentId = 'student-user'; // In real app, get from auth
+  const studentId = user?.id || user?.studentId || 'demo-student';
 
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+    
+    // Check for success messages from test completion
+    if (location.state?.message) {
+      setMessage(location.state.message);
+      // Clear the message after 5 seconds
+      setTimeout(() => setMessage(''), 5000);
+    }
+  }, [location.state]);
 
   const fetchDashboardData = async () => {
     try {
@@ -114,8 +125,25 @@ const StudentDashboard = () => {
 
   return (
     <div className="max-w-7xl mx-auto">
+      {/* Success/Info Messages */}
+      {message && (
+        <div className="mb-6 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-md">
+          <div className="flex justify-between items-center">
+            <span>{message}</span>
+            <button 
+              onClick={() => setMessage('')}
+              className="text-green-600 hover:text-green-800 font-bold"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Student Dashboard</h1>
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          Welcome, {user?.name || 'Student'}!
+        </h1>
         <p className="text-gray-600">
           AI-powered adaptive learning tailored to your progress and learning style
         </p>
@@ -183,6 +211,15 @@ const StudentDashboard = () => {
                         </p>
                       </div>
                       <div className="flex flex-col items-end space-y-2">
+                        {assignment.proctorConfig?.enabled && (
+                          <span className="px-2 py-1 rounded text-xs bg-orange-100 text-orange-800 flex items-center">
+                            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clipRule="evenodd" />
+                              <path d="M12.454 16.697L9.75 13.992a4 4 0 01-3.742-3.741L2.335 6.578A9.98 9.98 0 00.458 10c1.274 4.057 5.065 7 9.542 7 .847 0 1.669-.105 2.454-.303z" />
+                            </svg>
+                            Proctored
+                          </span>
+                        )}
                         <span className={`px-2 py-1 rounded text-xs ${
                           assignment.status === 'completed' ? 'bg-green-100 text-green-800' :
                           assignment.status === 'in-progress' ? 'bg-yellow-100 text-yellow-800' :
@@ -192,10 +229,10 @@ const StudentDashboard = () => {
                         </span>
                         {assignment.status === 'generated' && (
                           <Link 
-                            to={`/test/${assignment._id}`}
+                            to={assignment.proctorConfig?.enabled ? `/proctored-test/${assignment._id}` : `/test/${assignment._id}`}
                             className="bg-primary-600 text-white px-3 py-1 rounded text-sm hover:bg-primary-700 transition-colors"
                           >
-                            Start Test
+                            {assignment.proctorConfig?.enabled ? 'Start Proctored Test' : 'Start Test'}
                           </Link>
                         )}
                       </div>

@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { assignmentAPI, resultAPI } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 const Test = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [assignment, setAssignment] = useState(null);
   const [loading, setLoading] = useState(true);
   const [currentQuestion, setCurrentQuestion] = useState(0);
@@ -12,9 +14,14 @@ const Test = () => {
   const [timeLeft, setTimeLeft] = useState(null);
   const [testStarted, setTestStarted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState(null);
   const [error, setError] = useState('');
+  const [warnings, setWarnings] = useState([]);
+  const [questionTimeTracker, setQuestionTimeTracker] = useState({});
+  const [startedAt, setStartedAt] = useState(null);
 
-  const studentId = 'student-user'; // In real app, get from auth
+  const studentId = user?.id || user?.studentId || 'demo-student';
 
   useEffect(() => {
     fetchAssignment();
@@ -25,20 +32,46 @@ const Test = () => {
       const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
       return () => clearTimeout(timer);
     } else if (testStarted && timeLeft === 0) {
-      handleSubmit();
+      handleSubmit(true); // Auto-submit when time expires
     }
   }, [timeLeft, testStarted]);
 
+  // Auto-save answers every 10 seconds
+  useEffect(() => {
+    if (testStarted) {
+      const autoSaveInterval = setInterval(() => {
+        autoSaveAnswers();
+      }, 10000); // Save every 10 seconds
+
+      return () => clearInterval(autoSaveInterval);
+    }
+  }, [testStarted, answers]);
+
+  // Save answer immediately when changed
+  const autoSaveAnswers = useCallback(async () => {
+    if (!testStarted || Object.keys(answers).length === 0) return;
+
+    try {
+      setAutoSaving(true);
+      // Save current answers to backend
+      await assignmentAPI.saveAnswer(id, {
+        studentId,
+        answers,
+        timestamp: new Date().toISOString()
+      });
+      setLastSaved(new Date());
+    } catch (err) {
+      console.warn('Auto-save failed:', err);
+      setWarnings(prev => [...prev, 'Auto-save failed. Your answers may not be saved.']);
+    } finally {
+      setAutoSaving(false);
+    }
+  }, [id, studentId, answers, testStarted]);
+
   const fetchAssignment = async () => {
     try {
-      const response = await assignmentAPI.getById(id);
+      const response = await assignmentAPI.getByIdForStudent(id, studentId);
       const assignmentData = response.data;
-      
-      // Check if student is assigned to this test
-      if (!assignmentData.assignedStudents.includes(studentId)) {
-        setError('You are not assigned to this test.');
-        return;
-      }
 
       setAssignment(assignmentData);
       
@@ -48,10 +81,19 @@ const Test = () => {
         return;
       }
       
-      // Set timer: 2 minutes per question
-      setTimeLeft(assignmentData.questionsGenerated.length * 120);
+      // Set timer: Use assignment timeLimit or default 2 minutes per question
+      const timeLimit = assignmentData.timeLimit ? 
+        assignmentData.timeLimit * 60 : 
+        assignmentData.questionsGenerated.length * 120;
+      setTimeLeft(timeLimit);
     } catch (err) {
-      setError('Failed to load assignment');
+      if (err.response?.status === 403) {
+        setError('You are not assigned to this test.');
+      } else if (err.response?.status === 400 && err.response.data.submission) {
+        setError('You have already submitted this test.');
+      } else {
+        setError('Failed to load assignment');
+      }
     } finally {
       setLoading(false);
     }
@@ -59,62 +101,126 @@ const Test = () => {
 
   const startTest = async () => {
     try {
-      await assignmentAPI.start(id);
+      await assignmentAPI.start(id, studentId);
+      const testStartTime = Date.now();
+      setStartedAt(testStartTime);
       setTestStarted(true);
+      
+      // Initialize timing for first question
+      setQuestionTimeTracker(prev => ({
+        ...prev,
+        0: { startTime: testStartTime, attempts: 1 }
+      }));
     } catch (err) {
       setError('Failed to start test');
     }
   };
 
+  // Track question timing and attempts
+  const trackQuestionChange = (fromQuestion, toQuestion) => {
+    const now = Date.now();
+    
+    // End timing for previous question
+    if (fromQuestion >= 0) {
+      setQuestionTimeTracker(prev => ({
+        ...prev,
+        [fromQuestion]: {
+          ...prev[fromQuestion],
+          endTime: now
+        }
+      }));
+    }
+    
+    // Start timing for new question
+    setQuestionTimeTracker(prev => ({
+      ...prev,
+      [toQuestion]: {
+        startTime: now,
+        attempts: prev[toQuestion]?.attempts ? prev[toQuestion].attempts + 1 : 1,
+        endTime: prev[toQuestion]?.endTime // Keep previous end time if returning to question
+      }
+    }));
+  };
+
+  // Enhanced answer selection with attempt tracking
   const handleAnswerSelect = (questionIndex, answerIndex) => {
     setAnswers(prev => ({
       ...prev,
       [questionIndex]: answerIndex
     }));
+
+    // Track answer attempt
+    setQuestionTimeTracker(prev => ({
+      ...prev,
+      [questionIndex]: {
+        ...prev[questionIndex],
+        attempts: prev[questionIndex]?.attempts ? prev[questionIndex].attempts + 1 : 1
+      }
+    }));
+
+    // Save this answer immediately
+    autoSaveAnswers();
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (isAutoSubmit = false) => {
     try {
       setSubmitting(true);
       
-      // Calculate score
-      let correctAnswers = 0;
-      const questionResults = assignment.questionsGenerated.map((question, index) => {
-        const userAnswer = answers[index];
-        const isCorrect = userAnswer === question.correctAnswer;
-        if (isCorrect) correctAnswers++;
+      // Calculate enhanced submission data with analytics
+      const enhancedAnswers = Array.from({ length: assignment.questionsGenerated.length }, (_, index) => {
+        const answer = answers[index] ?? null;
+        const questionStartTime = questionTimeTracker[index]?.startTime || startedAt;
+        const questionEndTime = questionTimeTracker[index]?.endTime || Date.now();
+        const timeSpentOnQuestion = Math.max(0, Math.floor((questionEndTime - questionStartTime) / 1000));
         
         return {
-          questionId: question.questionId,
-          question: question.question,
-          userAnswer,
-          correctAnswer: question.correctAnswer,
-          isCorrect,
-          topic: question.topic || 'Unknown'
+          questionIndex: index,
+          selectedAnswer: answer,
+          timeSpent: timeSpentOnQuestion,
+          attempts: questionTimeTracker[index]?.attempts || 1
         };
       });
 
-      const score = (correctAnswers / assignment.questionsGenerated.length) * 100;
+      const totalTimeSpent = Math.floor((Date.now() - startedAt) / 1000);
+      const testDurationMinutes = assignment.timeLimit || (assignment.questionsGenerated.length * 2);
 
-      // Submit results
-      await resultAPI.submit({
+      // Prepare comprehensive submission data for enhanced analytics
+      const submissionData = {
         assignmentId: id,
-        student: studentId,
-        answers: questionResults,
-        score,
-        totalQuestions: assignment.questionsGenerated.length,
-        correctAnswers,
-        timeTaken: (assignment.questionsGenerated.length * 120) - timeLeft
-      });
+        studentId,
+        answers: enhancedAnswers,
+        timeSpent: totalTimeSpent,
+        startedAt: new Date(startedAt),
+        metadata: {
+          browserInfo: navigator.userAgent,
+          screenResolution: `${screen.width}x${screen.height}`,
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          completionRate: (enhancedAnswers.filter(a => a.selectedAnswer !== null).length / assignment.questionsGenerated.length) * 100,
+          averageTimePerQuestion: totalTimeSpent / assignment.questionsGenerated.length,
+          questionSwitchCount: currentQuestion, // Approximate number of question navigation
+          testDuration: testDurationMinutes,
+          submissionMethod: isAutoSubmit ? 'auto' : 'manual',
+          deviceType: /Mobile|Android|iPhone|iPad/.test(navigator.userAgent) ? 'mobile' : 'desktop'
+        }
+      };
 
-      // Navigate to results or dashboard
-      navigate('/student-dashboard', { 
+      // Submit to enhanced results endpoint for comprehensive analytics
+      const response = await resultAPI.submit(submissionData);
+
+      // Navigate to enhanced results page
+      navigate('/results', { 
         state: { 
-          message: `Test completed! Score: ${score.toFixed(1)}%` 
+          message: isAutoSubmit ? 
+            `Test auto-submitted due to time limit! Score: ${response.data.score}%` :
+            `Test completed! Score: ${response.data.score}%`,
+          score: response.data.score,
+          resultId: response.data._id,
+          enhanced: true // Flag to use enhanced results display
         }
       });
     } catch (err) {
       setError('Failed to submit test');
+      console.error('Submit error:', err);
     } finally {
       setSubmitting(false);
     }
@@ -171,22 +277,38 @@ const Test = () => {
             </div>
             <div className="flex justify-between">
               <span className="font-medium">Time Limit:</span>
-              <span>{formatTime((assignment.questionsGenerated?.length || 0) * 120)}</span>
+              <span>{formatTime(timeLeft)}</span>
             </div>
             <div className="flex justify-between">
               <span className="font-medium">Topics:</span>
               <span>{assignment.selectedTopics?.join(', ') || assignment.targetTopics?.join(', ') || 'Mixed'}</span>
             </div>
+            <div className="flex justify-between">
+              <span className="font-medium">Student:</span>
+              <span>{user?.name || 'Demo Student'}</span>
+            </div>
           </div>
 
           <div className="bg-yellow-50 p-4 rounded-md mb-6">
-            <h3 className="font-medium text-yellow-800 mb-2">Instructions:</h3>
+            <h3 className="font-medium text-yellow-800 mb-2">📋 Test Instructions:</h3>
             <ul className="text-sm text-yellow-700 space-y-1">
-              <li>• You have 2 minutes per question</li>
+              <li>• You have {Math.floor(timeLeft / 60)} minutes to complete this test</li>
               <li>• Select one answer per question</li>
-              <li>• You can navigate between questions</li>
+              <li>• You can navigate between questions using the question numbers</li>
+              <li>• Your answers are automatically saved every 10 seconds</li>
               <li>• Test will auto-submit when time expires</li>
               <li>• Make sure you have a stable internet connection</li>
+              <li>• Click "Submit Test" when you're finished</li>
+            </ul>
+          </div>
+
+          <div className="bg-blue-50 p-4 rounded-md mb-6">
+            <h3 className="font-medium text-blue-800 mb-2">💡 Tips for Success:</h3>
+            <ul className="text-sm text-blue-700 space-y-1">
+              <li>• Read each question carefully before selecting an answer</li>
+              <li>• Answer all questions you're confident about first</li>
+              <li>• Return to difficult questions if time permits</li>
+              <li>• Keep an eye on the timer and pace yourself</li>
             </ul>
           </div>
 
@@ -194,8 +316,12 @@ const Test = () => {
             onClick={startTest}
             className="w-full bg-primary-600 text-white py-3 rounded-lg hover:bg-primary-700 transition-colors text-lg font-medium"
           >
-            Start Test
+            🚀 Start Test
           </button>
+
+          <p className="text-center text-gray-500 text-sm mt-4">
+            Once you start, the timer will begin counting down
+          </p>
         </div>
       </div>
     );
@@ -216,6 +342,23 @@ const Test = () => {
 
   return (
     <div className="max-w-4xl mx-auto">
+      {/* Warnings */}
+      {warnings.length > 0 && (
+        <div className="mb-4 space-y-2">
+          {warnings.map((warning, index) => (
+            <div key={index} className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-md">
+              ⚠️ {warning}
+              <button 
+                onClick={() => setWarnings(prev => prev.filter((_, i) => i !== index))}
+                className="float-right text-yellow-600 hover:text-yellow-800"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-white p-4 rounded-lg shadow-md mb-6">
         <div className="flex justify-between items-center mb-4">
@@ -227,6 +370,19 @@ const Test = () => {
             <span className={`font-mono text-lg ${timeLeft < 300 ? 'text-red-600' : 'text-gray-700'}`}>
               ⏱️ {formatTime(timeLeft)}
             </span>
+            {/* Auto-save status */}
+            <div className="flex items-center space-x-2">
+              {autoSaving ? (
+                <span className="text-blue-600 text-sm flex items-center">
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600 mr-1"></div>
+                  Saving...
+                </span>
+              ) : lastSaved ? (
+                <span className="text-green-600 text-sm">
+                  ✓ Saved {new Date(lastSaved).toLocaleTimeString()}
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -236,6 +392,11 @@ const Test = () => {
             className="bg-primary-600 h-2 rounded-full transition-all duration-300"
             style={{ width: `${progress}%` }}
           ></div>
+        </div>
+
+        {/* Question completion status */}
+        <div className="mt-2 text-sm text-gray-600">
+          Progress: {Object.keys(answers).length} of {assignment.questionsGenerated.length} questions answered
         </div>
       </div>
 
@@ -298,25 +459,33 @@ const Test = () => {
       <div className="bg-white p-4 rounded-lg shadow-md">
         <div className="flex justify-between items-center">
           <button
-            onClick={() => setCurrentQuestion(Math.max(0, currentQuestion - 1))}
+            onClick={() => {
+              const newQuestion = Math.max(0, currentQuestion - 1);
+              trackQuestionChange(currentQuestion, newQuestion);
+              setCurrentQuestion(newQuestion);
+            }}
             disabled={currentQuestion === 0}
             className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Previous
+            ← Previous
           </button>
 
-          <div className="flex space-x-2">
+          <div className="flex space-x-2 max-w-md overflow-x-auto">
             {assignment.questionsGenerated.map((_, index) => (
               <button
                 key={index}
-                onClick={() => setCurrentQuestion(index)}
-                className={`w-8 h-8 rounded text-sm ${
+                onClick={() => {
+                  trackQuestionChange(currentQuestion, index);
+                  setCurrentQuestion(index);
+                }}
+                className={`w-10 h-10 rounded text-sm font-medium transition-colors ${
                   index === currentQuestion
                     ? 'bg-primary-600 text-white'
                     : answers[index] !== undefined
-                    ? 'bg-green-100 text-green-800 border border-green-300'
-                    : 'bg-gray-100 text-gray-600 border border-gray-300'
+                    ? 'bg-green-100 text-green-800 border border-green-300 hover:bg-green-200'
+                    : 'bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-200'
                 }`}
+                title={answers[index] !== undefined ? `Question ${index + 1} - Answered` : `Question ${index + 1} - Not answered`}
               >
                 {index + 1}
               </button>
@@ -325,20 +494,54 @@ const Test = () => {
 
           {currentQuestion === assignment.questionsGenerated.length - 1 ? (
             <button
-              onClick={handleSubmit}
+              onClick={() => {
+                if (Object.keys(answers).length < assignment.questionsGenerated.length) {
+                  const unanswered = assignment.questionsGenerated.length - Object.keys(answers).length;
+                  if (!window.confirm(`You have ${unanswered} unanswered question(s). Are you sure you want to submit?`)) {
+                    return;
+                  }
+                }
+                handleSubmit();
+              }}
               disabled={submitting}
-              className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 disabled:opacity-50"
+              className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 disabled:opacity-50 flex items-center"
             >
-              {submitting ? 'Submitting...' : 'Submit Test'}
+              {submitting ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Submitting...
+                </>
+              ) : (
+                '✓ Submit Test'
+              )}
             </button>
           ) : (
             <button
-              onClick={() => setCurrentQuestion(Math.min(assignment.questionsGenerated.length - 1, currentQuestion + 1))}
+              onClick={() => {
+                const newQuestion = Math.min(assignment.questionsGenerated.length - 1, currentQuestion + 1);
+                trackQuestionChange(currentQuestion, newQuestion);
+                setCurrentQuestion(newQuestion);
+              }}
               className="bg-primary-600 text-white px-4 py-2 rounded hover:bg-primary-700"
             >
-              Next
+              Next →
             </button>
           )}
+        </div>
+
+        {/* Test summary */}
+        <div className="mt-4 pt-4 border-t border-gray-200">
+          <div className="flex justify-between text-sm text-gray-600">
+            <span>
+              Answered: {Object.keys(answers).length} / {assignment.questionsGenerated.length}
+            </span>
+            <span>
+              Time remaining: {formatTime(timeLeft)}
+              {timeLeft < 300 && (
+                <span className="text-red-600 font-medium ml-2">⚠️ Less than 5 minutes!</span>
+              )}
+            </span>
+          </div>
         </div>
       </div>
     </div>

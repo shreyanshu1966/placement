@@ -109,10 +109,10 @@ const Courses = () => {
 
               <div className="flex justify-between items-center">
                 <Link 
-                  to={`/generate-assignment?courseId=${course._id}`}
+                  to={`/create-assessment?courseId=${course._id}`}
                   className="text-primary-600 hover:text-primary-700 text-sm font-medium"
                 >
-                  Generate Assignment
+                  Create Assessment
                 </Link>
                 <button 
                   onClick={() => deleteCourse(course._id)}

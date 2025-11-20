@@ -1,14 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { courseAPI, questionBankAPI, assignmentAPI, studentAPI } from '../services/api';
+import { Link, useSearchParams } from 'react-router-dom';
+import { courseAPI, questionBankAPI, assignmentAPI, authAPI } from '../services/api';
 
 const AssessmentCreator = () => {
+  const [searchParams] = useSearchParams();
+  const preselectedCourseId = searchParams.get('courseId');
+  
   const [courses, setCourses] = useState([]);
   const [students, setStudents] = useState([]);
-  const [selectedCourse, setSelectedCourse] = useState('');
+  const [selectedCourse, setSelectedCourse] = useState(preselectedCourseId || '');
   const [selectedTopics, setSelectedTopics] = useState([]);
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [assessmentTitle, setAssessmentTitle] = useState('');
+  
+  // Proctoring configuration
+  const [proctoringEnabled, setProctoringEnabled] = useState(false);
+  const [proctoringConfig, setProctoringConfig] = useState({
+    webcamRequired: true,
+    screenRecording: true,
+    audioMonitoring: false,
+    faceDetection: true,
+    eyeTracking: false,
+    browserLockdown: true,
+    preventCopyPaste: true,
+    preventRightClick: true,
+    preventTabSwitch: true,
+    allowCalculator: false,
+    allowNotes: false,
+    maxSuspiciousActivities: 5,
+    autoTerminateOnCritical: true,
+    recordingQuality: 'medium'
+  });
+  
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -21,13 +44,19 @@ const AssessmentCreator = () => {
 
   useEffect(() => {
     fetchCourses();
+    fetchStudents(); // Fetch students immediately since they're not course-specific anymore
   }, []);
 
   useEffect(() => {
     if (selectedCourse) {
-      fetchStudents();
+      // Course selection logic without re-fetching students
+      const course = courses.find(c => c._id === selectedCourse);
+      if (course) {
+        setSelectedTopics(course.syllabus.map(s => s.topic));
+        setAssessmentTitle(`Assessment - ${course.title}`);
+      }
     }
-  }, [selectedCourse]);
+  }, [selectedCourse, courses]);
 
   const fetchCourses = async () => {
     try {
@@ -40,7 +69,7 @@ const AssessmentCreator = () => {
 
   const fetchStudents = async () => {
     try {
-      const response = await studentAPI.getAll(selectedCourse);
+      const response = await authAPI.getUsersByRole('student');
       setStudents(response.data);
     } catch (err) {
       setError('Failed to fetch students');
@@ -131,7 +160,11 @@ const AssessmentCreator = () => {
         selectedTopics,
         assignedStudents: selectedStudents,
         createdBy: 'faculty-user',
-        title: assessmentTitle
+        title: assessmentTitle,
+        proctorConfig: {
+          enabled: proctoringEnabled,
+          ...proctoringConfig
+        }
       });
 
       setCreationProgress('');
@@ -335,7 +368,7 @@ const AssessmentCreator = () => {
                   onClick={() => setSelectedStudents(
                     selectedStudents.length === students.length 
                       ? [] 
-                      : students.map(s => s.studentId)
+                      : students.map(s => s._id)
                   )}
                   className="text-sm text-primary-600 hover:text-primary-700"
                 >
@@ -349,13 +382,13 @@ const AssessmentCreator = () => {
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {students.map((student) => (
                   <label 
-                    key={student.studentId}
+                    key={student._id}
                     className="flex items-center space-x-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50"
                   >
                     <input
                       type="checkbox"
-                      checked={selectedStudents.includes(student.studentId)}
-                      onChange={() => handleStudentToggle(student.studentId)}
+                      checked={selectedStudents.includes(student._id)}
+                      onChange={() => handleStudentToggle(student._id)}
                       className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                     />
                     <div className="flex-1">
@@ -382,10 +415,259 @@ const AssessmentCreator = () => {
         </div>
       )}
 
-      {/* Step 4: Preview Questions */}
+      {/* Step 4: Proctoring Configuration */}
       {selectedCourse && selectedTopics.length > 0 && selectedStudents.length > 0 && (
         <div className="bg-white p-6 rounded-lg shadow-md mb-6">
-          <h2 className="text-xl font-semibold mb-4">Step 4: Preview & Create Assignment</h2>
+          <h2 className="text-xl font-semibold mb-4">Step 4: Proctoring Configuration</h2>
+          <p className="text-gray-600 mb-4">
+            Configure proctoring settings for this assessment to ensure exam integrity.
+          </p>
+
+          {/* Enable Proctoring Toggle */}
+          <div className="mb-6">
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                checked={proctoringEnabled}
+                onChange={(e) => setProctoringEnabled(e.target.checked)}
+                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-3"
+              />
+              <div>
+                <span className="font-medium text-gray-900">Enable Proctored Exam</span>
+                <p className="text-sm text-gray-600">
+                  Activate webcam monitoring, screen recording, and anti-cheating measures
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {/* Proctoring Settings */}
+          {proctoringEnabled && (
+            <div className="border-l-4 border-primary-500 pl-6 space-y-6">
+              {/* Monitoring Features */}
+              <div>
+                <h4 className="font-medium text-gray-900 mb-3">🎥 Monitoring Features</h4>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.webcamRequired}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        webcamRequired: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Webcam Required</span>
+                  </label>
+                  
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.screenRecording}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        screenRecording: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Screen Recording</span>
+                  </label>
+                  
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.faceDetection}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        faceDetection: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Face Detection</span>
+                  </label>
+                  
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.audioMonitoring}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        audioMonitoring: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Audio Monitoring</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Security Restrictions */}
+              <div>
+                <h4 className="font-medium text-gray-900 mb-3">🔒 Security Restrictions</h4>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.browserLockdown}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        browserLockdown: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Browser Lockdown</span>
+                  </label>
+                  
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.preventCopyPaste}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        preventCopyPaste: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Prevent Copy/Paste</span>
+                  </label>
+                  
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.preventRightClick}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        preventRightClick: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Prevent Right Click</span>
+                  </label>
+                  
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.preventTabSwitch}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        preventTabSwitch: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Prevent Tab Switching</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Allowed Tools */}
+              <div>
+                <h4 className="font-medium text-gray-900 mb-3">🛠️ Allowed Tools</h4>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.allowCalculator}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        allowCalculator: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Allow Calculator</span>
+                  </label>
+                  
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.allowNotes}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        allowNotes: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Allow Notes</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Advanced Settings */}
+              <div>
+                <h4 className="font-medium text-gray-900 mb-3">⚙️ Advanced Settings</h4>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Max Suspicious Activities
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={proctoringConfig.maxSuspiciousActivities}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        maxSuspiciousActivities: parseInt(e.target.value)
+                      }))}
+                      className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-primary-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Recording Quality
+                    </label>
+                    <select
+                      value={proctoringConfig.recordingQuality}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        recordingQuality: e.target.value
+                      }))}
+                      className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="low">Low (faster upload)</option>
+                      <option value="medium">Medium (balanced)</option>
+                      <option value="high">High (best quality)</option>
+                    </select>
+                  </div>
+                </div>
+                
+                <div className="mt-4">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={proctoringConfig.autoTerminateOnCritical}
+                      onChange={(e) => setProctoringConfig(prev => ({
+                        ...prev,
+                        autoTerminateOnCritical: e.target.checked
+                      }))}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                    />
+                    <span className="text-sm">Auto-terminate on critical violations</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Proctoring Preview */}
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h4 className="font-medium text-yellow-800 mb-2">⚠️ Proctoring Rules Preview</h4>
+                <div className="text-sm text-yellow-700 space-y-1">
+                  <div>• Students will need to grant webcam and microphone access</div>
+                  <div>• The exam will run in fullscreen mode (if browser lockdown is enabled)</div>
+                  <div>• All activities will be recorded and monitored</div>
+                  <div>• Suspicious activities will result in warnings or test termination</div>
+                  <div>• Students will see real-time monitoring indicators during the exam</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Step 5: Preview Questions & Create */}
+      {selectedCourse && selectedTopics.length > 0 && selectedStudents.length > 0 && (
+        <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+          <h2 className="text-xl font-semibold mb-4">Step 5: Preview & Create Assignment</h2>
           
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">
