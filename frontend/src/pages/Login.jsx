@@ -160,6 +160,17 @@ const Login = () => {
                 👨‍🏫 Login as Faculty
               </button>
             </div>
+            <div className="mt-4 p-3 bg-gray-50 rounded-md text-xs text-left">
+              <p className="font-semibold text-gray-700 mb-2">💡 Manual Login Credentials:</p>
+              <div className="space-y-2">
+                <div>
+                  <p className="text-gray-600">👨‍🏫 Faculty: <span className="font-mono text-blue-600">faculty@demo.com</span> / <span className="font-mono text-blue-600">faculty123</span></p>
+                </div>
+                <div>
+                  <p className="text-gray-600">🎓 Student: <span className="font-mono text-blue-600">student@demo.com</span> / <span className="font-mono text-blue-600">student123</span></p>
+                </div>
+              </div>
+            </div>
             <p className="text-xs text-gray-500 mt-2">
               Demo accounts for quick testing
             </p>
